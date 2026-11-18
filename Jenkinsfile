@@ -8,7 +8,11 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'frontend-website'
+        AWS_REGION = 'us-east-1'
+        AWS_ACCOUNT_ID = '882638355979'
+        ECR_REPO = 'frontend-website'
+        ECR_REGISTRY = '882638355979.dkr.ecr.us-east-1.amazonaws.com'
+        IMAGE_NAME = '882638355979.dkr.ecr.us-east-1.amazonaws.com/frontend-website'
         CONTAINER_NAME = 'frontend-website'
         HOST_PORT = '80'
     }
@@ -24,10 +28,12 @@ pipeline {
         stage('Validate Files') {
             steps {
                 sh '''
+                    set -e
                     test -f index.html
                     test -f style.css
                     test -f script.js
-                    echo "Website files validated successfully"
+                    test -f Dockerfile
+                    echo "All website files validated!"
                 '''
             }
         }
@@ -38,6 +44,35 @@ pipeline {
                     docker build \
                     -t ${IMAGE_NAME}:${BUILD_NUMBER} \
                     -t ${IMAGE_NAME}:latest .
+                '''
+            }
+        }
+
+        stage('ECR Login') {
+            steps {
+                sh '''
+                    aws ecr get-login-password \
+                    --region ${AWS_REGION} | \
+                    docker login \
+                    --username AWS \
+                    --password-stdin ${ECR_REGISTRY}
+                '''
+            }
+        }
+
+        stage('Push Image to ECR') {
+            steps {
+                sh '''
+                    docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                    docker push ${IMAGE_NAME}:latest
+                '''
+            }
+        }
+
+        stage('Pull Image from ECR') {
+            steps {
+                sh '''
+                    docker pull ${IMAGE_NAME}:${BUILD_NUMBER}
                 '''
             }
         }
@@ -59,9 +94,18 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
-                    sleep 3
-                    curl -f http://127.0.0.1/
-                    echo "Deployment successful!"
+                    set -e
+
+                    for i in $(seq 1 10); do
+                        if curl -fsS http://127.0.0.1/; then
+                            echo "Website deployment successful!"
+                            exit 0
+                        fi
+                        sleep 3
+                    done
+
+                    echo "Website health check failed!"
+                    exit 1
                 '''
             }
         }
@@ -69,11 +113,11 @@ pipeline {
 
     post {
         success {
-            echo 'CI/CD Pipeline completed successfully!'
+            echo 'SUCCESS: Docker image pushed to ECR and website deployed!'
         }
 
         failure {
-            echo 'Pipeline failed. Check Jenkins console output.'
+            echo 'FAILED: Check Jenkins Console Output.'
         }
     }
 }
